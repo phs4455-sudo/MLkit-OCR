@@ -123,7 +123,7 @@ class HDPassportScanActivity : AppCompatActivity() {
         // SP60에서 "MRZ가 박스에 크게 들어왔는데도" 근접 인식이 잘 안 되는 경우가 많아,
         // - Continuous AF + 박스 하단(텍스트) 기준 포커스
         // - 기본 디지털 줌을 적용해(필요 시 핀치로 조절) 인식 성공률을 끌어올립니다.
-        private const val SP60_INITIAL_ZOOM_RATIO = 1.8f
+        private const val SP60_INITIAL_ZOOM_RATIO = 1.4f
         private const val SP60_MAX_ZOOM_RATIO = 2.4f
         private const val SP60_AUTO_ZOOM_STEP = 0.10f
 
@@ -1116,8 +1116,8 @@ class HDPassportScanActivity : AppCompatActivity() {
 
     private fun setScanningUi() {
         mrzOverlay.setGuideColor(COLOR_SCANNING)
-        tvHint.text = "여권 하단 MRZ(2줄) 또는\nH.Point 바코드(7500… 16자리)를 박스 안에 맞춰주세요"
-        tvSubHint.text = "※ 뒤집어서 촬영해도 인식돼요. 초점이 흐리면 조금 멀리 두거나 화면을 탭하세요."
+        tvHint.text = "여권 하단 MRZ코드 또는\nH.Point 바코드를 박스 안에 맞춰주세요"
+        tvSubHint.text = "※ 초점이 흐리면 조금 멀리 두거나 화면을 탭하세요."
     }
 
     private fun handleRetry(isBlurry: Boolean) {
@@ -1127,8 +1127,8 @@ class HDPassportScanActivity : AppCompatActivity() {
 
         val msg = when {
             isBlurry -> "초점이 흐립니다.\n여권을 조금 멀리 두거나 화면을 탭해 초점을 맞춰주세요"
-            flip180Enabled -> "뒤집어서도 인식 가능합니다.\nMRZ(2줄) 또는 H.Point(7500…16자리)를 박스 안에 맞춰주세요"
-            else -> "여권 하단 MRZ(2줄) 또는\nH.Point 바코드(7500… 16자리)를 박스 안에 맞춰주세요"
+            flip180Enabled -> "여권 하단 MRZ코드 또는 H.Point 바코드를 박스 안에 맞춰주세요"
+            else -> "여권 하단 MRZ코드 또는\nH.Point 바코드를 박스 안에 맞춰주세요"
         }
 
         runOnUiThread {
@@ -1388,7 +1388,7 @@ class HDPassportScanActivity : AppCompatActivity() {
         }
 
         // SP60 화면에서 크롭 박스와 가이드 카드 사이 간격을 조금 더 확보(=카드를 더 위로 올림)
-        val margin = dpToPx(18f)
+        val margin = dpToPx(80f)
         val desiredTop = guide.top - demoHintContainer.height - margin
         val minTop = topBar.bottom.toFloat() + dpToPx(6f)
 
