@@ -415,7 +415,7 @@ object MRZUtils {
             }
         }
 
-        val fixedK = fixKAsAngle(String(arr))
+        val fixedK = fixKAsAngleInLine1(String(arr))
         return sanitizeTrailingFiller(fixedK)
     }
 
@@ -423,6 +423,33 @@ object MRZUtils {
         if (line.isNullOrEmpty()) return ""
         val base = baseNormalize(line)
         return fixKAsAngle(base)
+    }
+
+    private fun fixKAsAngleInLine1(s: String): String {
+        if (!s.contains('K')) return s
+
+        val arr = s.toCharArray()
+        for (i in arr.indices) {
+            if (arr[i] != 'K') continue
+
+            val prev = if (i > 0) arr[i - 1] else '<'
+            val next = if (i < arr.lastIndex) arr[i + 1] else '<'
+
+            // line1 이름영역에서 자주 보이는 오인식: "...YK<<<..." (실제는 "...Y<<<<...")
+            // - 한쪽이 '<'이고 주변 3칸 안에 '<'가 3개 이상이면 filler로 판단
+            // - PARK<< 같은 정상 케이스는 주변 '<' 밀도가 낮아 보존될 가능성이 큼
+            val sideFiller = prev == '<' || next == '<'
+            if (sideFiller && countAnglesAround(arr, i, radius = 3) >= 3) {
+                arr[i] = '<'
+                continue
+            }
+
+            // 기존 보정(양옆 filler이거나 filler 밀집)
+            val looksLikeFiller = (prev == '<' || prev == 'K') && (next == '<' || next == 'K')
+            if (looksLikeFiller || hasStrongFillerNeighborhood(arr, i)) arr[i] = '<'
+        }
+
+        return String(arr)
     }
 
     private fun baseNormalize(line: String): String {
