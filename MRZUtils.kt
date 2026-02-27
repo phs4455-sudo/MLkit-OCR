@@ -495,17 +495,6 @@ object MRZUtils {
         return fillerCount >= 3
     }
 
-    private fun countAnglesAround(arr: CharArray, idx: Int, radius: Int): Int {
-        var count = 0
-        for (offset in -radius..radius) {
-            if (offset == 0) continue
-            val p = idx + offset
-            if (p !in arr.indices) continue
-            if (arr[p] == '<') count++
-        }
-        return count
-    }
-
     /**
      * line1에서 trailing filler(연속 '<')가 시작된 이후에는 글자가 나오면 대부분 노이즈입니다.
      * - 가장 마지막에 등장하는 "6개 이상 연속 '<'" run을 filler 시작으로 보고,
