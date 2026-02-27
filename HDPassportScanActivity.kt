@@ -104,10 +104,13 @@ class HDPassportScanActivity : AppCompatActivity() {
 
         /** 바코드(MLKit) 분석 최소 간격 - MRZ 인식 속도를 위해 과도한 바코드 스캔을 줄입니다 */
         // MRZ가 화면에 크게 들어왔을 때는 바코드 스캔이 MRZ 인식을 "막"지 않도록 더 뜸하게 수행합니다.
-        private const val BARCODE_PROCESS_INTERVAL_MS = 1100L
+        private const val BARCODE_PROCESS_INTERVAL_MS = 1600L
 
         /** MRZ가 "화면에 있다"고 판단되면 일정 시간 바코드 스캔을 멈추고 MRZ 우선 처리 */
-        private const val MRZ_PRIORITY_DURATION_MS = 2000L
+        private const val MRZ_PRIORITY_DURATION_MS = 2800L
+
+        /** 스캔 화면 자동 종료 시간(리소스 보호) */
+        private const val SCAN_SCREEN_TIMEOUT_MS = 30_000L
 
         /** 탭/자동 포커스 재시도 최소 간격 */
         private const val AUTOFOCUS_INTERVAL_MS = 2200L
@@ -129,10 +132,6 @@ class HDPassportScanActivity : AppCompatActivity() {
 
         // SP60에서 AF를 더 자주 "킥"해주면 근접에서 초점이 더 빨리/안정적으로 잡히는 경향이 있습니다.
         private const val SP60_AF_KICK_INTERVAL_MS = 2500L
-
-        // SP60에서 선명도 점수 분포가 낮게 나오는 편이라(기기별 편차),
-        // blur 안내/스킵이 과도하지 않도록 스킵용 기준을 낮게 둡니다.
-        private const val SP60_SHARPNESS_SKIP_THRESHOLD = 1.6
 
         private const val TAG = "HDPassportScan"
     }
@@ -174,6 +173,12 @@ class HDPassportScanActivity : AppCompatActivity() {
 
             demoHintContainer.postDelayed(this, demoHintCarouselIntervalMs)
         }
+    }
+
+
+    // --- 스캔 화면 자동 종료(30초) ---
+    private val scanTimeoutRunnable = Runnable {
+        onScanTimeout()
     }
 
     private lateinit var topBar: View
@@ -274,6 +279,7 @@ class HDPassportScanActivity : AppCompatActivity() {
             positionDemoHintAboveGuide()
         }
         startDemoHintCarousel()
+        scheduleScanTimeout()
 
         if (!isFinished.get()) {
             val granted = ContextCompat.checkSelfPermission(
@@ -288,6 +294,7 @@ class HDPassportScanActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        cancelScanTimeout()
         stopDemoHintCarousel()
         mrzOverlay.stopScanAnimation()
         stopCamera()
@@ -295,6 +302,7 @@ class HDPassportScanActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelScanTimeout()
         stopDemoHintCarousel()
         stopCamera()
 
@@ -337,6 +345,7 @@ class HDPassportScanActivity : AppCompatActivity() {
         mrzOverlay.post { positionDemoHintAboveGuide() }
 
         btnClose.setOnClickListener {
+            cancelScanTimeout()
             setResult(RESULT_CANCELED)
             finish()
         }
@@ -505,6 +514,42 @@ class HDPassportScanActivity : AppCompatActivity() {
         cameraProvider?.unbindAll()
         cameraProvider = null
         camera = null
+    }
+
+
+    private fun scheduleScanTimeout() {
+        if (!this::previewView.isInitialized) return
+        previewView.removeCallbacks(scanTimeoutRunnable)
+        previewView.postDelayed(scanTimeoutRunnable, SCAN_SCREEN_TIMEOUT_MS)
+    }
+
+    private fun cancelScanTimeout() {
+        if (!this::previewView.isInitialized) return
+        previewView.removeCallbacks(scanTimeoutRunnable)
+    }
+
+    private fun onScanTimeout() {
+        if (isFinished.get()) return
+        if (!isFinished.compareAndSet(false, true)) return
+
+        runOnUiThread {
+            try {
+                stopDemoHintCarousel()
+            } catch (_: Exception) {
+            }
+
+            try {
+                mrzOverlay.setGuideColor(COLOR_ERROR)
+                mrzOverlay.stopScanAnimation()
+            } catch (_: Exception) {
+            }
+
+            stopCamera()
+
+            showToast("스캔 시간이 초과되어 종료합니다.")
+            setResult(RESULT_CANCELED)
+            finish()
+        }
     }
 
     private fun startFocusAt(x: Float, y: Float, autoCancelSeconds: Long = 2L) {
@@ -739,7 +784,7 @@ class HDPassportScanActivity : AppCompatActivity() {
                 handleRetry(isBlurry = true)
                 done() // MRZ OCR 스킵
             } else {
-                runMrzTextRecognition(mediaImage, imageProxy, baseRotation, done)
+                runMrzTextRecognition(mediaImage, imageProxy, baseRotation, ::done)
             }
         }
 
@@ -1026,6 +1071,7 @@ class HDPassportScanActivity : AppCompatActivity() {
             mrzOverlay.stopScanAnimation()
             vibrateSuccess()
 
+            cancelScanTimeout()
             stopCamera()
 
             val data = Intent().apply {
@@ -1044,6 +1090,7 @@ class HDPassportScanActivity : AppCompatActivity() {
             mrzOverlay.stopScanAnimation()
             vibrateSuccess()
 
+            cancelScanTimeout()
             stopCamera()
 
             val data = Intent().apply {
@@ -1168,7 +1215,7 @@ class HDPassportScanActivity : AppCompatActivity() {
 
         val widthRatio = if (isSp60) 0.99f else 0.98f
         val heightRatio = if (isSp60) {
-            if (targetAspectRatio == AspectRatio.RATIO_4_3) 0.34f else 0.30f
+            if (targetAspectRatio == AspectRatio.RATIO_4_3) 0.38f else 0.34f
         } else {
             if (targetAspectRatio == AspectRatio.RATIO_4_3) 0.30f else 0.26f
         }
@@ -1343,7 +1390,7 @@ class HDPassportScanActivity : AppCompatActivity() {
         val (resId, title, subtitle) = when (type) {
             DemoHintType.MRZ -> Triple(
                 R.drawable.demo_passport_mrz,
-                "여권 MRZ(하단 2줄)을 박스에 맞춰주세요",
+                "여권 MRZ코드를 박스에 맞춰주세요",
                 "여권을 평평하게 두고 하단을 박스에 맞추면 인식이 빨라요"
             )
             DemoHintType.HPOINT -> Triple(

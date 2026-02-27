@@ -34,7 +34,7 @@ object MRZUtils {
     private val ANGLE_QUOTES_PATTERN: Pattern = Pattern.compile("[«»∞∝]")
 
     // TD3 여권 MRZ 1행은 대부분 P< 로 시작
-    private const val FIRST_LINE_REGEX = "^P<.*"
+    private const val FIRST_LINE_REGEX = "P[0-9A-Z<][0-9A-Z<]{3}[0-9A-Z<]{39}"
 
     // 숫자 필드에서 흔한 OCR 오인식 보정: O/Q/D->0, I/L->1, Z->2, S->5, G->6, B->8
     private val DIGIT_FIX_MAP: Map<Char, Char> = mapOf(
@@ -280,18 +280,24 @@ object MRZUtils {
         val maxStart = s.length - LINE_LENGTH
         if (maxStart == 0) {
             val only = if (isLine1) normalizeLine1(s) else normalizeLine2(s)
-            return if (isLine1 && !Regex(FIRST_LINE_REGEX).matches(only)) emptyList() else listOf(only)
+            return if (isLine1 && (!Regex(FIRST_LINE_REGEX).matches(only) || !only.substring(5).contains("<<"))) emptyList() else listOf(only)
         }
 
         return if (isLine1) {
-            // line1은 P< anchor를 기준으로 start 후보를 강하게 제한
+            // line1은 'P'로 시작하는 모든 위치에서 44자 후보를 만들고 regex로 필터링합니다.
+            // (P<, PM, P0 등 다양한 문서코드 2번째 문자를 허용)
             val out = LinkedHashSet<String>()
+            val firstLineRegex = Regex(FIRST_LINE_REGEX)
+
             for (i in 0..maxStart) {
                 if (s[i] != 'P') continue
-                if (i + 1 <= s.lastIndex && s[i + 1] != '<') continue
                 val sub = s.substring(i, i + LINE_LENGTH)
                 val cand = normalizeLine1(sub)
-                if (Regex(FIRST_LINE_REGEX).matches(cand)) out.add(cand)
+
+                // 이름 구간(5..)에 '<<' 패턴이 없으면 MRZ 1행일 가능성이 낮습니다.
+                if (!cand.substring(5).contains("<<")) continue
+
+                if (firstLineRegex.matches(cand)) out.add(cand)
                 if (out.size >= 6) break
             }
             out.toList()
@@ -369,6 +375,9 @@ object MRZUtils {
         // line1은 문자 위주라 숫자→문자 오인식 보정이 도움이 됨
         val arr = base.toCharArray()
         for (i in arr.indices) {
+            // TD3 1행의 2번째 문자는 문서코드(예: '<', 'M', '0' 등)라서 숫자→문자 치환을 하지 않습니다.
+            if (i == 1) continue
+
             when (arr[i]) {
                 '0' -> arr[i] = 'O'
                 '1' -> arr[i] = 'I'
@@ -461,11 +470,24 @@ object MRZUtils {
     private fun validateTd3PassportMrzCoreInternal(line1: String, line2: String): Boolean {
         if (line1.length != LINE_LENGTH || line2.length != LINE_LENGTH) return false
         if (!Regex(FIRST_LINE_REGEX).matches(line1)) return false
-        if (line1.getOrNull(1) != '<') return false
 
-        fun alpha3LooksOk(s: String): Boolean {
-            if (s.length != 3) return false
+        fun alpha3LooksOk(raw: String): Boolean {
+            if (raw.length != 3) return false
+
+            // 발행국/국적 코드는 원칙적으로 A-Z 3글자이지만,
+            // OCR에서 O↔0, I↔1 같은 오인식이 자주 나와서 최소 보정을 한 뒤 검사합니다.
+            fun fix(c: Char): Char = when (c) {
+                '0' -> 'O'
+                '1' -> 'I'
+                '2' -> 'Z'
+                '5' -> 'S'
+                '8' -> 'B'
+                else -> c
+            }
+
+            val s = buildString(3) { raw.forEach { append(fix(it)) } }
             if (!s.all { it in 'A'..'Z' || it == '<' }) return false
+
             // OCR에서 한 글자가 '<'로 빠지는 정도는 허용(최소 2글자는 문자)
             return s.count { it in 'A'..'Z' } >= 2
         }
