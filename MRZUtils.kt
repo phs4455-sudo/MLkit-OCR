@@ -339,6 +339,8 @@ object MRZUtils {
                     bucket[minIdx] = item
                 }
             }
+            val top = ArrayList<Scored>(10)
+            val seen = mutableSetOf<String>()
 
             for (i in 0..maxStart) {
                 val sub = s.substring(i, i + LINE_LENGTH)
@@ -362,6 +364,27 @@ object MRZUtils {
             val chosen = if (top.isNotEmpty()) top else relaxed
 
             chosen
+                if (rough < 12) continue
+
+                if (top.size < 10) {
+                    top.add(Scored(cand, rough))
+                    continue
+                }
+
+                var minIdx = 0
+                var minScore = top[0].score
+                for (k in 1 until top.size) {
+                    if (top[k].score < minScore) {
+                        minScore = top[k].score
+                        minIdx = k
+                    }
+                }
+                if (rough > minScore) {
+                    top[minIdx] = Scored(cand, rough)
+                }
+            }
+
+            top
                 .sortedByDescending { it.score }
                 .map { it.line }
                 .distinct()
