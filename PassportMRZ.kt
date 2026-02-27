@@ -55,33 +55,69 @@ class PassportMRZ(mrz: String) {
 
     private fun parseMRZ() {
         try {
-            // --- Line 1 ---
-            documentType = normalizeAlpha(line1.substring(0, 1))
-            issuingCountry = normalizeAlpha(line1.substring(2, 5))
-
-            val nameField = line1.substring(5)
-            val nameParts = nameField.split("<<")
-            lastName = if (nameParts.isNotEmpty()) {
-                normalizeAlpha(nameParts[0].replace("<", " ").trim())
-            } else {
-                ""
-            }
-            firstName = if (nameParts.size > 1) {
-                normalizeAlpha(nameParts[1].replace("<", " ").trim())
-            } else {
-                ""
-            }
-
             // --- Line 2 ---
+            // line2는 위치가 비교적 안정적이어서 먼저 파싱해 line1 보정 판단에도 사용합니다.
             passportNumber = line2.substring(0, 9).replace("<", "")
             nationality = normalizeAlpha(line2.substring(10, 13))
             birthDate = normalizeNumeric(line2.substring(13, 19))
             sex = line2.substring(20, 21)
             expiryDate = normalizeNumeric(line2.substring(21, 27))
 
+            // --- Line 1 (기본 TD3 오프셋) ---
+            documentType = normalizeAlpha(line1.substring(0, 1))
+            val standardIssuing = normalizeAlpha(line1.substring(2, 5))
+            val standardName = parseNameField(line1.substring(5))
+
+            issuingCountry = standardIssuing
+            lastName = standardName.first
+            firstName = standardName.second
+
+            // OCR이 line1 앞부분(발행국 3자리)을 놓친 경우: P<NELSON<<CALLIE...
+            // - 기본 파싱이면 성이 SON으로 잘릴 수 있어, nationality(line2)와 비교해 fallback 적용
+            if (shouldApplyMissingCountryFallback(standardIssuing, standardName.first, nationality)) {
+                val fallbackName = parseNameField(line1.substring(2))
+                if (fallbackName.first.length >= standardName.first.length + 2) {
+                    lastName = fallbackName.first
+                    firstName = fallbackName.second
+                    if (nationality.length == 3) issuingCountry = nationality
+                }
+            }
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private fun shouldApplyMissingCountryFallback(
+        standardIssuing: String,
+        standardLastName: String,
+        parsedNationality: String
+    ): Boolean {
+        if (!line1.startsWith("P<") || line1.length < 8) return false
+
+        // 국가코드가 유효 3글자와 다르거나, line2 nationality와 불일치하면 의심
+        val issuingLooksValid = standardIssuing.length == 3 && standardIssuing.all { it in 'A'..'Z' }
+        val mismatchWithNationality = parsedNationality.length == 3 && standardIssuing != parsedNationality
+
+        if (!line1.substring(2).contains("<<")) return false
+        if (standardLastName.length > 4) return false
+
+        return !issuingLooksValid || mismatchWithNationality
+    }
+
+    private fun parseNameField(nameField: String): Pair<String, String> {
+        val nameParts = nameField.split("<<", limit = 2)
+        val last = if (nameParts.isNotEmpty()) {
+            normalizeAlpha(nameParts[0].replace("<", " ").trim())
+        } else {
+            ""
+        }
+        val first = if (nameParts.size > 1) {
+            normalizeAlpha(nameParts[1].replace("<", " ").trim())
+        } else {
+            ""
+        }
+        return Pair(last, first)
     }
 
     /**

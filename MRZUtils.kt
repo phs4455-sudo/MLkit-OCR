@@ -35,6 +35,7 @@ object MRZUtils {
 
     // TD3 여권 MRZ 1행은 대부분 P< 로 시작
     private const val FIRST_LINE_REGEX = "P[0-9A-Z<][0-9A-Z<]{3}[0-9A-Z<]{39}"
+    private val FIRST_LINE_PATTERN: Regex = Regex(FIRST_LINE_REGEX)
 
     // 숫자 필드에서 흔한 OCR 오인식 보정: O/Q/D->0, I/L->1, Z->2, S->5, G->6, B->8
     private val DIGIT_FIX_MAP: Map<Char, Char> = mapOf(
@@ -83,16 +84,18 @@ object MRZUtils {
 
         // 2) 하단 쪽만 우선
         val window = if (cleaned.size > MAX_ROWS_WINDOW) cleaned.takeLast(MAX_ROWS_WINDOW) else cleaned
+        val line1CandidatesByRow = window.map { candidatesFromRow(it, isLine1 = true) }
+        val line2CandidatesByRow = window.map { candidatesFromRow(it, isLine1 = false) }
 
         // 3) (주로) line1(row i) + line2(row j) 형태를 탐색 (MRZ는 아래쪽이므로 bottom-up)
         for (i in window.lastIndex downTo 0) {
-            val c1 = candidatesFromRow(window[i], isLine1 = true)
+            val c1 = line1CandidatesByRow[i]
             if (c1.isEmpty()) continue
 
             val maxJ = min(window.lastIndex, i + 3) // 가끔 빈 줄/노이즈 한 줄이 끼는 경우 대비
             for (j in (i + 1)..maxJ) {
                 if (j > window.lastIndex) break
-                val c2 = candidatesFromRow(window[j], isLine1 = false)
+                val c2 = line2CandidatesByRow[j]
                 if (c2.isEmpty()) continue
 
                 for (l1 in c1) {
@@ -108,12 +111,16 @@ object MRZUtils {
         for (row in window.asReversed()) {
             val s = row
             if (s.length < TOTAL_LENGTH) continue
-            val starts = s.indices.filter { idx -> s[idx] == 'P' && idx + TOTAL_LENGTH <= s.length }
-            for (st in starts.take(6)) {
+            var added = 0
+            val maxStart = s.length - TOTAL_LENGTH
+            for (st in 0..maxStart) {
+                if (s[st] != 'P') continue
                 val l1 = s.substring(st, st + LINE_LENGTH)
                 val l2 = s.substring(st + LINE_LENGTH, st + TOTAL_LENGTH)
                 val fixed = validateAndFixTd3PassportMrz(l1, l2)
                 if (fixed != null) return fixed
+                added++
+                if (added >= 6) break
             }
         }
 
@@ -141,18 +148,20 @@ object MRZUtils {
         if (cleaned.isEmpty()) return null
 
         val window = if (cleaned.size > MAX_ROWS_WINDOW) cleaned.takeLast(MAX_ROWS_WINDOW) else cleaned
+        val line1CandidatesByRow = window.map { candidatesFromRow(it, isLine1 = true) }
+        val line2CandidatesByRow = window.map { candidatesFromRow(it, isLine1 = false) }
 
         var bestCore: Pair<String, String>? = null
 
         // 2) (주로) line1(row i) + line2(row j) 탐색
         for (i in window.lastIndex downTo 0) {
-            val c1 = candidatesFromRow(window[i], isLine1 = true)
+            val c1 = line1CandidatesByRow[i]
             if (c1.isEmpty()) continue
 
             val maxJ = min(window.lastIndex, i + 3)
             for (j in (i + 1)..maxJ) {
                 if (j > window.lastIndex) break
-                val c2 = candidatesFromRow(window[j], isLine1 = false)
+                val c2 = line2CandidatesByRow[j]
                 if (c2.isEmpty()) continue
 
                 for (l1 in c1) {
@@ -173,8 +182,10 @@ object MRZUtils {
         for (row in window.asReversed()) {
             val s = row
             if (s.length < TOTAL_LENGTH) continue
-            val starts = s.indices.filter { idx -> s[idx] == 'P' && idx + TOTAL_LENGTH <= s.length }
-            for (st in starts.take(6)) {
+            var added = 0
+            val maxStart = s.length - TOTAL_LENGTH
+            for (st in 0..maxStart) {
+                if (s[st] != 'P') continue
                 val l1 = s.substring(st, st + LINE_LENGTH)
                 val l2 = s.substring(st + LINE_LENGTH, st + TOTAL_LENGTH)
 
@@ -185,6 +196,9 @@ object MRZUtils {
                     val core = validateAndFixTd3PassportMrzCore(l1, l2)
                     if (core != null) bestCore = core
                 }
+
+                added++
+                if (added >= 6) break
             }
         }
 
@@ -280,14 +294,13 @@ object MRZUtils {
         val maxStart = s.length - LINE_LENGTH
         if (maxStart == 0) {
             val only = if (isLine1) normalizeLine1(s) else normalizeLine2(s)
-            return if (isLine1 && (!Regex(FIRST_LINE_REGEX).matches(only) || !only.substring(5).contains("<<"))) emptyList() else listOf(only)
+            return if (isLine1 && (!FIRST_LINE_PATTERN.matches(only) || !only.substring(5).contains("<<"))) emptyList() else listOf(only)
         }
 
         return if (isLine1) {
             // line1은 'P'로 시작하는 모든 위치에서 44자 후보를 만들고 regex로 필터링합니다.
             // (P<, PM, P0 등 다양한 문서코드 2번째 문자를 허용)
             val out = LinkedHashSet<String>()
-            val firstLineRegex = Regex(FIRST_LINE_REGEX)
 
             for (i in 0..maxStart) {
                 if (s[i] != 'P') continue
@@ -297,14 +310,15 @@ object MRZUtils {
                 // 이름 구간(5..)에 '<<' 패턴이 없으면 MRZ 1행일 가능성이 낮습니다.
                 if (!cand.substring(5).contains("<<")) continue
 
-                if (firstLineRegex.matches(cand)) out.add(cand)
+                if (FIRST_LINE_PATTERN.matches(cand)) out.add(cand)
                 if (out.size >= 6) break
             }
             out.toList()
         } else {
             // line2는 숫자 비중이 높으므로 rough score로 상위 후보만 선택
             data class Scored(val line: String, val score: Int)
-            val scored = ArrayList<Scored>(maxStart + 1)
+            val top = ArrayList<Scored>(10)
+            val seen = mutableSetOf<String>()
 
             for (i in 0..maxStart) {
                 val sub = s.substring(i, i + LINE_LENGTH)
@@ -313,14 +327,32 @@ object MRZUtils {
                 if (!looksLikeLine2Quick(sub)) continue
 
                 val cand = normalizeLine2(sub)
+                if (!seen.add(cand)) continue
+
                 // 너무 MRZ스럽지 않으면 skip (속도 + 오탐 방지)
                 val rough = scoreLine2Rough(cand)
-                if (rough >= 12) scored.add(Scored(cand, rough))
+                if (rough < 12) continue
+
+                if (top.size < 10) {
+                    top.add(Scored(cand, rough))
+                    continue
+                }
+
+                var minIdx = 0
+                var minScore = top[0].score
+                for (k in 1 until top.size) {
+                    if (top[k].score < minScore) {
+                        minScore = top[k].score
+                        minIdx = k
+                    }
+                }
+                if (rough > minScore) {
+                    top[minIdx] = Scored(cand, rough)
+                }
             }
 
-            scored
+            top
                 .sortedByDescending { it.score }
-                .take(10)
                 .map { it.line }
                 .distinct()
         }
@@ -386,7 +418,7 @@ object MRZUtils {
             }
         }
 
-        val fixedK = fixKAsAngle(String(arr))
+        val fixedK = fixKAsAngleInLine1(String(arr))
         return sanitizeTrailingFiller(fixedK)
     }
 
@@ -394,6 +426,33 @@ object MRZUtils {
         if (line.isNullOrEmpty()) return ""
         val base = baseNormalize(line)
         return fixKAsAngle(base)
+    }
+
+    private fun fixKAsAngleInLine1(s: String): String {
+        if (!s.contains('K')) return s
+
+        val arr = s.toCharArray()
+        for (i in arr.indices) {
+            if (arr[i] != 'K') continue
+
+            val prev = if (i > 0) arr[i - 1] else '<'
+            val next = if (i < arr.lastIndex) arr[i + 1] else '<'
+
+            // line1 이름영역에서 자주 보이는 오인식: "...YK<<<..." (실제는 "...Y<<<<...")
+            // - 한쪽이 '<'이고 주변 3칸 안에 '<'가 3개 이상이면 filler로 판단
+            // - PARK<< 같은 정상 케이스는 주변 '<' 밀도가 낮아 보존될 가능성이 큼
+            val sideFiller = prev == '<' || next == '<'
+            if (sideFiller && countAnglesAround(arr, i, radius = 3) >= 3) {
+                arr[i] = '<'
+                continue
+            }
+
+            // 기존 보정(양옆 filler이거나 filler 밀집)
+            val looksLikeFiller = (prev == '<' || prev == 'K') && (next == '<' || next == 'K')
+            if (looksLikeFiller || hasStrongFillerNeighborhood(arr, i)) arr[i] = '<'
+        }
+
+        return String(arr)
     }
 
     private fun baseNormalize(line: String): String {
@@ -418,9 +477,36 @@ object MRZUtils {
             val prev = if (i > 0) arr[i - 1] else '<'
             val next = if (i < arr.lastIndex) arr[i + 1] else '<'
             val looksLikeFiller = (prev == '<' || prev == 'K') && (next == '<' || next == 'K')
-            if (looksLikeFiller) arr[i] = '<'
+            if (looksLikeFiller || hasStrongFillerNeighborhood(arr, i)) arr[i] = '<'
         }
         return String(arr)
+    }
+
+    private fun hasStrongFillerNeighborhood(arr: CharArray, idx: Int): Boolean {
+        // '<' run 근처에서 끼어든 K(예: <<K<<, <K<<<)를 filler로 보정합니다.
+        // 실제 이름(KIM, PARK)은 주변 filler 밀도가 낮아 대부분 유지됩니다.
+        var fillerCount = 0
+        for (offset in -2..2) {
+            if (offset == 0) continue
+            val p = idx + offset
+            if (p !in arr.indices) {
+                fillerCount++
+                continue
+            }
+            if (arr[p] == '<' || arr[p] == 'K') fillerCount++
+        }
+        return fillerCount >= 3
+    }
+
+    private fun countAnglesAround(arr: CharArray, idx: Int, radius: Int): Int {
+        var count = 0
+        for (offset in -radius..radius) {
+            if (offset == 0) continue
+            val p = idx + offset
+            if (p !in arr.indices) continue
+            if (arr[p] == '<') count++
+        }
+        return count
     }
 
     /**
@@ -469,7 +555,7 @@ object MRZUtils {
      */
     private fun validateTd3PassportMrzCoreInternal(line1: String, line2: String): Boolean {
         if (line1.length != LINE_LENGTH || line2.length != LINE_LENGTH) return false
-        if (!Regex(FIRST_LINE_REGEX).matches(line1)) return false
+        if (!FIRST_LINE_PATTERN.matches(line1)) return false
 
         fun alpha3LooksOk(raw: String): Boolean {
             if (raw.length != 3) return false
