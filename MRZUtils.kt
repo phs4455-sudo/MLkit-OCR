@@ -318,7 +318,6 @@ object MRZUtils {
             // line2는 숫자 비중이 높으므로 rough score로 상위 후보만 선택
             data class Scored(val line: String, val score: Int)
             val top = ArrayList<Scored>(10)
-            val seen = HashSet<String>(max(16, maxStart / 2))
 
             for (i in 0..maxStart) {
                 val sub = s.substring(i, i + LINE_LENGTH)
@@ -496,17 +495,6 @@ object MRZUtils {
             if (arr[p] == '<' || arr[p] == 'K') fillerCount++
         }
         return fillerCount >= 3
-    }
-
-    private fun countAnglesAround(arr: CharArray, idx: Int, radius: Int): Int {
-        var count = 0
-        for (offset in -radius..radius) {
-            if (offset == 0) continue
-            val p = idx + offset
-            if (p !in arr.indices) continue
-            if (arr[p] == '<') count++
-        }
-        return count
     }
 
     /**
