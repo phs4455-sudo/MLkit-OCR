@@ -317,6 +317,28 @@ object MRZUtils {
         } else {
             // line2는 숫자 비중이 높으므로 rough score로 상위 후보만 선택
             data class Scored(val line: String, val score: Int)
+            val top = ArrayList<Scored>(14)
+            val relaxed = ArrayList<Scored>(8)
+            val seen = mutableSetOf<String>()
+
+            fun pushTop(bucket: MutableList<Scored>, item: Scored, limit: Int) {
+                if (bucket.size < limit) {
+                    bucket.add(item)
+                    return
+                }
+
+                var minIdx = 0
+                var minScore = bucket[0].score
+                for (k in 1 until bucket.size) {
+                    if (bucket[k].score < minScore) {
+                        minScore = bucket[k].score
+                        minIdx = k
+                    }
+                }
+                if (item.score > minScore) {
+                    bucket[minIdx] = item
+                }
+            }
             val top = ArrayList<Scored>(10)
             val seen = mutableSetOf<String>()
 
@@ -331,6 +353,17 @@ object MRZUtils {
 
                 // 너무 MRZ스럽지 않으면 skip (속도 + 오탐 방지)
                 val rough = scoreLine2Rough(cand)
+                if (rough >= 10) {
+                    pushTop(top, Scored(cand, rough), limit = 14)
+                } else if (rough >= 7) {
+                    // 저화질/반사에서 rough score가 낮게 나오는 경우를 위한 안전망
+                    pushTop(relaxed, Scored(cand, rough), limit = 8)
+                }
+            }
+
+            val chosen = if (top.isNotEmpty()) top else relaxed
+
+            chosen
                 if (rough < 12) continue
 
                 if (top.size < 10) {
@@ -362,12 +395,19 @@ object MRZUtils {
         if (raw44.length != LINE_LENGTH) return false
         fun isDigitish(c: Char): Boolean = (c in '0'..'9') || DIGIT_FIX_MAP.containsKey(c)
 
-        // date YYMMDD (13..18), expiry YYMMDD (21..26)
-        for (i in 13..18) if (!isDigitish(raw44[i])) return false
-        for (i in 21..26) if (!isDigitish(raw44[i])) return false
+        fun countNonDigitish(range: IntRange): Int {
+            var miss = 0
+            for (i in range) if (!isDigitish(raw44[i])) miss++
+            return miss
+        }
 
-        // check digits (9,19,27)
-        for (i in intArrayOf(9, 19, 27)) if (!isDigitish(raw44[i])) return false
+        // date YYMMDD (13..18), expiry YYMMDD (21..26)
+        // - 반사/블러 프레임에서 1글자 정도 깨져도 후보에서 완전히 버리지 않도록 완화
+        if (countNonDigitish(13..18) > 1) return false
+        if (countNonDigitish(21..26) > 1) return false
+
+        // check digits (9,19,27) 중 최대 1개까지는 깨짐 허용
+        if (countNonDigitish(9..9) + countNonDigitish(19..19) + countNonDigitish(27..27) > 1) return false
 
         return true
     }
