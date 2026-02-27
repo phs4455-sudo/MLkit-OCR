@@ -19,7 +19,7 @@
         <ImageView
             android:id="@+id/demoHintImage"
             android:layout_width="160dp"
-            android:layout_height="96dp"
+            android:layout_height="100dp"
             android:src="@drawable/demo_passport_mrz"
             android:scaleType="fitCenter" />
 
