@@ -326,6 +326,8 @@ object MRZUtils {
                 if (!looksLikeLine2Quick(sub)) continue
 
                 val cand = normalizeLine2(sub)
+                if (!seen.add(cand)) continue
+
                 // 너무 MRZ스럽지 않으면 skip (속도 + 오탐 방지)
                 val rough = scoreLine2Rough(cand)
                 if (rough < 12) continue
